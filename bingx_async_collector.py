@@ -72,15 +72,6 @@ class ConnectionConfig:
     max_retry_delay: float = 30.0
     backoff_multiplier: float = 2.0
     
-@dataclass(slots=True)
-class CollectorStats:
-    """Statistics for the collector"""
-    candles_received: int = 0
-    candles_processed: int = 0
-    connection_attempts: int = 0
-    successful_connections: int = 0
-    errors_count: int = 0
-    
 class BingXProducerConsumer:
     def __init__(self, symbol: str = "BTC-USDT", interval: str = "3m", queue_size: int = 100):
         self._symbol = symbol
@@ -93,9 +84,6 @@ class BingXProducerConsumer:
         self._is_running = False
         self._producer_task: Optional[asyncio.Task] = None
         self._consumer_task: Optional[asyncio.Task] = None
-        
-        # Data and stats
-        self._stats = CollectorStats()
         
         # CSV file configuration
         self._csv_filename = f"{symbol}_{interval}_candles.csv"
@@ -138,7 +126,6 @@ class BingXProducerConsumer:
             logger.debug(f"Candle written to CSV: {candle}")
         except Exception as e:
             logger.error(f"Error writing to CSV: {e}")
-            self._stats.errors_count += 1
 
     def _is_candle_closed(self, timestamp: int) -> bool:
         """Check if this is a new completed 3-minute candle"""
@@ -156,7 +143,6 @@ class BingXProducerConsumer:
                 return gz_file.read().decode('utf-8')
         except Exception as e:
             logger.error(f"Decompression error: {e}")
-            self._stats.errors_count += 1
             return ""
 
     def _create_candle_from_data(self, kline_data: Any) -> Optional[Candle]:
@@ -180,12 +166,10 @@ class BingXProducerConsumer:
         except (KeyError, ValueError, TypeError, IndexError) as e:
             logger.error(f"Error creating candle from data: {e}")
             logger.error(f"Data format: {type(kline_data)}, Data: {kline_data}")
-            self._stats.errors_count += 1
             return None
 
     async def _producer(self) -> None:
         """Producer: WebSocket connection that feeds candles to queue"""
-        self._stats.connection_attempts += 1
         logger.info("Producer: Starting WebSocket connection")
         
         try:
@@ -195,7 +179,6 @@ class BingXProducerConsumer:
                 ping_timeout=None    # Disable ping timeout
             ) as websocket:
                 logger.info('Producer: WebSocket connected successfully')
-                self._stats.successful_connections += 1
                 
                 # Subscribe to channel
                 subscription = json.dumps(self._channel.to_dict())
@@ -234,8 +217,7 @@ class BingXProducerConsumer:
                                     if candle:
                                         # Put candle in queue (producer)
                                         await self._raw_queue.put(candle)
-                                        self._stats.candles_received += 1
-                                        logger.debug(f"Producer: Added candle to queue, total received: {self._stats.candles_received}")
+                                        logger.debug(f"Producer: Added candle to queue")
                         except json.JSONDecodeError as e:
                             # Skip empty or invalid JSON messages
                             if decoded_message.strip():  # Only log if message is not empty
@@ -243,7 +225,6 @@ class BingXProducerConsumer:
                         
                     except Exception as e:
                         logger.error(f"Producer: Error processing message: {e}")
-                        self._stats.errors_count += 1
                         
         except websockets.exceptions.ConnectionClosed as e:
             logger.warning(f"Producer: WebSocket connection closed: {e}")
@@ -251,7 +232,6 @@ class BingXProducerConsumer:
             logger.error(f"Producer: WebSocket connection closed with error: {e}")
         except Exception as e:
             logger.error(f"Producer: WebSocket error: {e}")
-            self._stats.errors_count += 1
 
     async def _consumer(self) -> None:
         """Consumer: Process candles from queue"""
@@ -266,7 +246,6 @@ class BingXProducerConsumer:
                 # Check if we have a completed candle to save
                 if self._is_candle_closed(candle.timestamp) and previous_candle is not None:
                     # Save the previous candle (which is now closed)
-                    self._stats.candles_processed += 1
                     
                     # Write to CSV file only for closed candles
                     self._write_candle_to_csv(previous_candle)
@@ -286,7 +265,6 @@ class BingXProducerConsumer:
                 
             except Exception as e:
                 logger.error(f"Consumer: Error processing candle: {e}")
-                self._stats.errors_count += 1
 
     async def start(self) -> None:
         """Start the producer-consumer system"""
