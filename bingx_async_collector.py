@@ -80,11 +80,6 @@ class CollectorStats:
     connection_attempts: int = 0
     successful_connections: int = 0
     errors_count: int = 0
-    start_time: Optional[datetime] = None
-    
-    def __post_init__(self):
-        if self.start_time is None:
-            self.start_time = datetime.utcnow()
     
 class BingXProducerConsumer:
     def __init__(self, symbol: str = "BTC-USDT", interval: str = "3m", queue_size: int = 100):
