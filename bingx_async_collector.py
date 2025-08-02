@@ -72,11 +72,6 @@ class ConnectionConfig:
     max_retry_delay: float = 30.0
     backoff_multiplier: float = 2.0
     
-    def get_retry_delay(self, attempt: int) -> float:
-        """Calculate retry delay with exponential backoff"""
-        delay = self.initial_retry_delay * (self.backoff_multiplier ** attempt)
-        return min(delay, self.max_retry_delay)
-
 @dataclass(slots=True)
 class CollectorStats:
     """Statistics for the collector"""
@@ -91,13 +86,6 @@ class CollectorStats:
         if self.start_time is None:
             self.start_time = datetime.utcnow()
     
-    @property
-    def uptime_seconds(self) -> float:
-        """Get uptime in seconds"""
-        if self.start_time:
-            return (datetime.utcnow() - self.start_time).total_seconds()
-        return 0.0
-
 class BingXProducerConsumer:
     def __init__(self, symbol: str = "BTC-USDT", interval: str = "3m", queue_size: int = 100):
         self._symbol = symbol
@@ -105,7 +93,6 @@ class BingXProducerConsumer:
         
         # Producer-Consumer queues
         self._raw_queue: asyncio.Queue[Candle] = asyncio.Queue(maxsize=queue_size)
-        self._processed_queue: asyncio.Queue[Candle] = asyncio.Queue(maxsize=queue_size)
         
         # Control
         self._is_running = False
@@ -113,7 +100,6 @@ class BingXProducerConsumer:
         self._consumer_task: Optional[asyncio.Task] = None
         
         # Data and stats
-        self._candles: List[Candle] = []
         self._stats = CollectorStats()
         
         # CSV file configuration
@@ -285,14 +271,10 @@ class BingXProducerConsumer:
                 # Check if we have a completed candle to save
                 if self._is_candle_closed(candle.timestamp) and previous_candle is not None:
                     # Save the previous candle (which is now closed)
-                    self._candles.append(previous_candle)
                     self._stats.candles_processed += 1
                     
                     # Write to CSV file only for closed candles
                     self._write_candle_to_csv(previous_candle)
-                    
-                    # Put in processed queue
-                    await self._processed_queue.put(previous_candle)
                     
                     logger.info(f"Consumer: Closed candle saved to CSV - {previous_candle}")
                 
@@ -358,16 +340,6 @@ class BingXProducerConsumer:
             logger.debug("Consumer task completed")
         
         logger.info("Producer-consumer system stopped successfully")
-
-    @property
-    def candles(self) -> List[Candle]:
-        """Get processed candles"""
-        return self._candles.copy()
-
-    @property
-    def stats(self) -> CollectorStats:
-        """Get collector statistics"""
-        return self._stats
 
 async def main():
     """Main function to run the producer-consumer system"""
